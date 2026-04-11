@@ -16,8 +16,47 @@ def test_add_route(router):
 
 
 def test_add_route_rejects_non_callable(router):
-    with pytest.raises(TypeError, match="Handler must be a callable"):
-        router.add_route("GET", "/bad", "not_a_function")
+    with pytest.raises(TypeError, match="Handler must be a callable or a string"):
+        router.add_route("GET", "/bad", 12345)
+
+
+def test_add_route_string_without_namespace_raises(router):
+    with pytest.raises(RuntimeError, match="without an active namespace"):
+        router.add_route("GET", "/bad", "FakeController:index")
+
+
+def test_add_route_string_without_colon_raises(router):
+    router.namespace("tests.fake_controller")
+    with pytest.raises(ValueError, match="Expected 'Class:method' format"):
+        router.add_route("GET", "/bad", "index_only")
+
+
+def test_add_route_with_string_handler(router, event_factory):
+    router.namespace("tests.fake_controller")
+    router.get("/test", "FakeController:index")
+
+    result = router.dispatch(event_factory("GET", "/test"))
+    assert result["statusCode"] == 200
+    assert '"handler": "index"' in result["body"]
+
+
+def test_add_route_with_string_handler_in_group(router, event_factory):
+    router.namespace("tests.fake_controller")
+    router.group("api")
+    router.post("/items", "FakeController:create")
+
+    result = router.dispatch(event_factory("POST", "/api/items"))
+    assert result["statusCode"] == 201
+    assert '"handler": "create"' in result["body"]
+
+
+def test_namespace_none_resets(router):
+    router.namespace("tests.fake_controller")
+    router.get("/a", "FakeController:index")
+
+    router.namespace(None)
+    with pytest.raises(RuntimeError, match="without an active namespace"):
+        router.get("/b", "FakeController:index")
 
 
 # --- Dispatch ---

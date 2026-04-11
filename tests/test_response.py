@@ -41,6 +41,14 @@ def test_json_with_list():
     assert json.loads(result["body"]) == [1, 2, 3]
 
 
+def test_html_returns_text_html():
+    result = Response().html("<h1>Hello</h1>")
+
+    assert result["statusCode"] == 200
+    assert result["headers"]["Content-Type"] == "text/html; charset=utf-8"
+    assert result["body"] == "<h1>Hello</h1>"
+
+
 def test_set_header():
     result = Response().set("X-Custom", "abc").send("ok")
 

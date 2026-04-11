@@ -79,6 +79,11 @@ class Response:
         self.body = json_dumps(body)
         return self._finalize()
 
+    def html(self, body: str):
+        self.headers["Content-Type"] = "text/html; charset=utf-8"
+        self.body = body
+        return self._finalize()
+
     def set(self, key: str, value: str):
         self.headers[key] = str(value)
         return self
