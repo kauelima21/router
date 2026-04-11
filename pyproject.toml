@@ -2,7 +2,7 @@
 name = "router"
 version = "1.0.0"
 description = "Pacote simples para manipulação de rotas e eventos do API Gateway (v1 e v2) com lambda functions."
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
