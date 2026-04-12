@@ -1,4 +1,6 @@
+import base64
 import json
+from urllib.parse import parse_qs
 
 
 class Request:
@@ -18,10 +20,22 @@ class Request:
         self.headers = event["headers"]
 
         self.raw_body = event.get("body") or ""
-        try:
-            self.body = json.loads(self.raw_body) if self.raw_body else {}
-        except (json.JSONDecodeError, TypeError):
+
+        if event.get("isBase64Encoded") and self.raw_body:
+            self.raw_body = base64.b64decode(self.raw_body).decode()
+
+        content_type = self.headers.get("content-type", "")
+
+        if not self.raw_body:
             self.body = {}
+        elif "application/x-www-form-urlencoded" in content_type:
+            parsed = parse_qs(self.raw_body)
+            self.body = {k: v[0] for k, v in parsed.items()}
+        else:
+            try:
+                self.body = json.loads(self.raw_body)
+            except (json.JSONDecodeError, TypeError):
+                self.body = {}
 
     def _parse_v1(self, event: dict) -> None:
         self.method = event["httpMethod"]
