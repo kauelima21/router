@@ -114,6 +114,28 @@ router.options(path, handler)
 router.head(path, handler)
 ```
 
+## Middleware
+
+Todos os metodos HTTP aceitam um parametro opcional `middleware`. O middleware e um callable que recebe `(request, response, next_fn)` e decide se a requisicao segue para o handler ou e interrompida.
+
+```python
+def auth_middleware(req, res, next_fn):
+    token = req.headers.get("Authorization")
+    if not token:
+        return res.status(401).json({"error": "Token ausente"})
+    return next_fn(req, res)
+
+router.get("/users", list_users, middleware=auth_middleware)
+router.post("/users", create_user, middleware=auth_middleware)
+
+# Rotas sem middleware continuam funcionando normalmente
+router.get("/health", health_handler)
+```
+
+O `next_fn` repassa a execucao para o handler. Se o middleware nao chamar `next_fn`, a requisicao e interrompida e a resposta retornada diretamente.
+
+Caso uma excecao ocorra dentro do middleware ou do handler, o router ainda retorna `500` como fallback.
+
 ## Tratamento de erros
 
 O router captura excecoes nao tratadas no handler e retorna `500` com corpo JSON:
