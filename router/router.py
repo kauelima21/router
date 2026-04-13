@@ -53,7 +53,7 @@ class Router:
         instance = cls()
         return getattr(instance, method_name)
 
-    def add_route(self, method: str, path: str, handler):
+    def _add_route(self, method: str, path: str, handler):
         resolved = self._resolve_handler(handler)
 
         if self._group:
@@ -88,22 +88,22 @@ class Router:
         return self
 
     def get(self, path: str, handler):
-        self.add_route("GET", path, handler)
+        self._add_route("GET", path, handler)
 
     def post(self, path: str, handler):
-        self.add_route("POST", path, handler)
+        self._add_route("POST", path, handler)
 
     def put(self, path: str, handler):
-        self.add_route("PUT", path, handler)
+        self._add_route("PUT", path, handler)
 
     def delete(self, path: str, handler):
-        self.add_route("DELETE", path, handler)
+        self._add_route("DELETE", path, handler)
 
     def patch(self, path: str, handler):
-        self.add_route("PATCH", path, handler)
+        self._add_route("PATCH", path, handler)
 
     def options(self, path: str, handler):
-        self.add_route("OPTIONS", path, handler)
+        self._add_route("OPTIONS", path, handler)
 
     def head(self, path: str, handler):
-        self.add_route("HEAD", path, handler)
+        self._add_route("HEAD", path, handler)

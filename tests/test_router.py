@@ -17,18 +17,18 @@ def test_add_route(router):
 
 def test_add_route_rejects_non_callable(router):
     with pytest.raises(TypeError, match="Handler must be a callable or a string"):
-        router.add_route("GET", "/bad", 12345)
+        router.get("/bad", 12345)
 
 
 def test_add_route_string_without_namespace_raises(router):
     with pytest.raises(RuntimeError, match="without an active namespace"):
-        router.add_route("GET", "/bad", "FakeController:index")
+        router.get("/bad", "FakeController:index")
 
 
 def test_add_route_string_without_colon_raises(router):
     router.namespace("tests.fake_controller")
     with pytest.raises(ValueError, match="Expected 'Class:method' format"):
-        router.add_route("GET", "/bad", "index_only")
+        router.get("/bad", "index_only")
 
 
 def test_add_route_with_string_handler(router, event_factory):
