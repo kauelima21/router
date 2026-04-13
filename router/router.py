@@ -30,6 +30,7 @@ class Router:
         self._namespace = None
         self._silent = silent
         self._api_version = api_version
+        self._error = None
 
     def _resolve_handler(self, handler):
         if callable(handler):
@@ -53,12 +54,12 @@ class Router:
         instance = cls()
         return getattr(instance, method_name)
 
-    def _add_route(self, method: str, path: str, handler):
+    def _add_route(self, method: str, path: str, handler, middleware=None):
         resolved = self._resolve_handler(handler)
 
         if self._group:
             path = f"/{self._group}{path}"
-        self.routes[method, path] = resolved
+        self.routes[method, path] = (resolved, middleware)
 
     def dispatch(self, event: dict):
         request = Request(event, api_version=self._api_version)
@@ -66,13 +67,17 @@ class Router:
         method = request.method
         path = request.path
 
-        handler = self.routes.get((method, path))
-        if not handler:
+        route = self.routes.get((method, path))
+        if not route:
             if not self._silent:
                 logger.warning("Route not found: %s %s", method, path)
             return response.status(404).send("Not Found")
 
+        handler, middleware = route
+
         try:
+            if middleware:
+                return middleware(request, response, lambda req, res: handler(req, res))
             return handler(request, response)
         except Exception as exc:
             if not self._silent:
@@ -87,23 +92,23 @@ class Router:
         self._group = group
         return self
 
-    def get(self, path: str, handler):
-        self._add_route("GET", path, handler)
+    def get(self, path: str, handler, middleware=None):
+        self._add_route("GET", path, handler, middleware)
 
-    def post(self, path: str, handler):
-        self._add_route("POST", path, handler)
+    def post(self, path: str, handler, middleware=None):
+        self._add_route("POST", path, handler, middleware)
 
-    def put(self, path: str, handler):
-        self._add_route("PUT", path, handler)
+    def put(self, path: str, handler, middleware=None):
+        self._add_route("PUT", path, handler, middleware)
 
-    def delete(self, path: str, handler):
-        self._add_route("DELETE", path, handler)
+    def delete(self, path: str, handler, middleware=None):
+        self._add_route("DELETE", path, handler, middleware)
 
-    def patch(self, path: str, handler):
-        self._add_route("PATCH", path, handler)
+    def patch(self, path: str, handler, middleware=None):
+        self._add_route("PATCH", path, handler, middleware)
 
-    def options(self, path: str, handler):
-        self._add_route("OPTIONS", path, handler)
+    def options(self, path: str, handler, middleware=None):
+        self._add_route("OPTIONS", path, handler, middleware)
 
-    def head(self, path: str, handler):
-        self._add_route("HEAD", path, handler)
+    def head(self, path: str, handler, middleware=None):
+        self._add_route("HEAD", path, handler, middleware)
