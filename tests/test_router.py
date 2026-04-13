@@ -191,3 +191,112 @@ def test_all_http_methods(router):
 
     for method in ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]:
         assert (method, "/r") in router.routes
+
+
+# --- Middleware ---
+
+def test_single_middleware_on_route(router, event_factory):
+    def add_header(req, res, next_fn):
+        res.headers["X-Custom"] = "yes"
+        return next_fn(req, res)
+
+    router.get("/m", lambda req, res: res.json({"ok": True}), middleware=add_header)
+    result = router.dispatch(event_factory("GET", "/m"))
+
+    assert result["statusCode"] == 200
+    assert result["headers"]["X-Custom"] == "yes"
+
+
+def test_middleware_list_on_route(router, event_factory):
+    calls = []
+
+    def mw1(req, res, next_fn):
+        calls.append("mw1")
+        return next_fn(req, res)
+
+    def mw2(req, res, next_fn):
+        calls.append("mw2")
+        return next_fn(req, res)
+
+    router.get("/m", lambda req, res: res.json({"ok": True}), middleware=[mw1, mw2])
+    router.dispatch(event_factory("GET", "/m"))
+
+    assert calls == ["mw1", "mw2"]
+
+
+def test_middleware_can_short_circuit(router, event_factory):
+    def block(req, res, next_fn):
+        return res.status(403).json({"error": "Forbidden"})
+
+    router.get("/secret", lambda req, res: res.json({"ok": True}), middleware=block)
+    result = router.dispatch(event_factory("GET", "/secret"))
+
+    assert result["statusCode"] == 403
+
+
+def test_group_middleware(router, event_factory):
+    calls = []
+
+    def auth(req, res, next_fn):
+        calls.append("auth")
+        return next_fn(req, res)
+
+    router.group("admin", middleware=auth)
+    router.get("/users", lambda req, res: res.json({"ok": True}))
+
+    result = router.dispatch(event_factory("GET", "/admin/users"))
+    assert result["statusCode"] == 200
+    assert calls == ["auth"]
+
+
+def test_group_middleware_list(router, event_factory):
+    calls = []
+
+    def auth(req, res, next_fn):
+        calls.append("auth")
+        return next_fn(req, res)
+
+    def log(req, res, next_fn):
+        calls.append("log")
+        return next_fn(req, res)
+
+    router.group("api", middleware=[auth, log])
+    router.get("/items", lambda req, res: res.json({"ok": True}))
+
+    router.dispatch(event_factory("GET", "/api/items"))
+    assert calls == ["auth", "log"]
+
+
+def test_group_middleware_combined_with_route_middleware(router, event_factory):
+    calls = []
+
+    def group_mw(req, res, next_fn):
+        calls.append("group")
+        return next_fn(req, res)
+
+    def route_mw(req, res, next_fn):
+        calls.append("route")
+        return next_fn(req, res)
+
+    router.group("api", middleware=group_mw)
+    router.get("/items", lambda req, res: res.json({"ok": True}), middleware=route_mw)
+
+    router.dispatch(event_factory("GET", "/api/items"))
+    assert calls == ["group", "route"]
+
+
+def test_group_none_resets_middleware(router, event_factory):
+    calls = []
+
+    def auth(req, res, next_fn):
+        calls.append("auth")
+        return next_fn(req, res)
+
+    router.group("admin", middleware=auth)
+    router.get("/users", lambda req, res: res.json({"ok": True}))
+
+    router.group(None)
+    router.get("/public", lambda req, res: res.json({"ok": True}))
+
+    router.dispatch(event_factory("GET", "/public"))
+    assert calls == []

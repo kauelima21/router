@@ -27,6 +27,7 @@ class Router:
     def __init__(self, silent: bool = False, api_version: str = "auto"):
         self.routes = {}
         self._group = ""
+        self._group_middleware = []
         self._namespace = None
         self._silent = silent
         self._api_version = api_version
@@ -54,12 +55,21 @@ class Router:
         instance = cls()
         return getattr(instance, method_name)
 
+    @staticmethod
+    def _normalize_middleware(middleware):
+        if middleware is None:
+            return []
+        if callable(middleware):
+            return [middleware]
+        return list(middleware)
+
     def _add_route(self, method: str, path: str, handler, middleware=None):
         resolved = self._resolve_handler(handler)
+        middlewares = self._group_middleware + self._normalize_middleware(middleware)
 
         if self._group:
             path = f"/{self._group}{path}"
-        self.routes[method, path] = (resolved, middleware)
+        self.routes[method, path] = (resolved, middlewares)
 
     def dispatch(self, event: dict):
         request = Request(event, api_version=self._api_version)
@@ -73,11 +83,15 @@ class Router:
                 logger.warning("Route not found: %s %s", method, path)
             return response.status(404).send("Not Found")
 
-        handler, middleware = route
+        handler, middlewares = route
 
         try:
-            if middleware:
-                return middleware(request, response, lambda req, res: handler(req, res))
+            if middlewares:
+                def make_next(index):
+                    if index >= len(middlewares):
+                        return lambda req, res: handler(req, res)
+                    return lambda req, res: middlewares[index](req, res, make_next(index + 1))
+                return make_next(0)(request, response)
             return handler(request, response)
         except Exception as exc:
             if not self._silent:
@@ -88,8 +102,9 @@ class Router:
         self._namespace = module_path
         return self
 
-    def group(self, group: str | None):
+    def group(self, group: str | None, middleware=None):
         self._group = group
+        self._group_middleware = self._normalize_middleware(middleware)
         return self
 
     def get(self, path: str, handler, middleware=None):
