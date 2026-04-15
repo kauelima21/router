@@ -19,6 +19,10 @@ class Request:
         self.params = event.get("pathParameters") or {}
         self.headers = event["headers"]
 
+        cookie_list = event.get("cookies", [])
+        if cookie_list and "cookie" not in self.headers:
+            self.headers["cookie"] = "; ".join(cookie_list)
+
         self.raw_body = event.get("body") or ""
         self.files = {}
 
