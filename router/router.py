@@ -1,9 +1,12 @@
 import importlib
 import logging
+import re
 
 from router.contracts.http import Request, Response
 
 logger = logging.getLogger(__name__)
+
+_PATH_PARAM_RE = re.compile(r"\{([^}/]+)\}")
 
 
 class Router:
@@ -69,21 +72,62 @@ class Router:
 
         if self._group:
             path = f"/{self._group}{path}"
-        self.routes[method, path] = (resolved, middlewares)
+        self.routes[method, path] = (resolved, middlewares, self._compile_path(path))
+
+    @staticmethod
+    def _compile_path(path: str):
+        """Compile a route template like ``/users/{id}`` into a regex that
+        captures each path parameter by name. Returned value is used as a
+        fallback when the registered routeKey on the event does not match the
+        actual raw path — notably when API Gateway integrates via a catch-all
+        ``/{proxy+}`` route.
+        """
+        regex = _PATH_PARAM_RE.sub(r"(?P<\1>[^/]+)", path)
+        return re.compile(f"^{regex}$")
+
+    def _resolve_route(self, method: str, path: str, raw_path: str):
+        """Resolve a registered route for the given request.
+
+        Strategy:
+        1. Try an exact ``(method, path)`` lookup — fast path for events where
+           the routeKey already carries the route template.
+        2. Fall back to matching ``raw_path`` against every registered route's
+           compiled pattern. This makes catch-all integrations work: when
+           API Gateway sends ``routeKey="ANY /{proxy+}"``, path ends up as
+           ``/{proxy+}`` but ``raw_path`` is the concrete URL.
+        """
+        direct = self.routes.get((method, path))
+        if direct is not None:
+            handler, middlewares, _ = direct
+            return handler, middlewares, path, {}
+
+        for (route_method, template), (handler, middlewares, pattern) in self.routes.items():
+            if route_method != method:
+                continue
+            match = pattern.match(raw_path)
+            if match:
+                return handler, middlewares, template, match.groupdict()
+
+        return None
 
     def dispatch(self, event: dict):
         request = Request(event, api_version=self._api_version)
         response = Response()
         method = request.method
         path = request.path
+        raw_path = request.raw_path
 
-        route = self.routes.get((method, path))
-        if not route:
+        resolved = self._resolve_route(method, path, raw_path)
+        if resolved is None:
             if not self._silent:
-                logger.warning("Route not found: %s %s", method, path)
+                logger.warning("Route not found: %s %s", method, raw_path or path)
             return response.status(404).send("Not Found")
 
-        handler, middlewares = route
+        handler, middlewares, matched_template, extra_params = resolved
+
+        if extra_params:
+            request.path = matched_template
+            request.params = {**(request.params or {}), **extra_params}
 
         try:
             if middlewares:
@@ -95,7 +139,7 @@ class Router:
             return handler(request, response)
         except Exception as exc:
             if not self._silent:
-                logger.error("Handler error on %s %s: %s", method, path, exc)
+                logger.error("Handler error on %s %s: %s", method, matched_template, exc)
             return response.status(500).json({"error": "Internal Server Error"})
 
     def namespace(self, module_path: str | None):

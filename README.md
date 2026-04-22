@@ -47,6 +47,35 @@ router = Router(api_version="v2")   # HTTP API
 
 A deteccao usa a presenca da chave `routeKey` (v2) ou `httpMethod` (v1) no evento.
 
+## Catch-all (`/{proxy+}`) integration
+
+O router aceita integracoes catch-all do API Gateway HTTP API sem configuracao extra. Quando o `routeKey` vem generico (ex.: `ANY /{proxy+}`), o dispatch faz fallback automatico para um match por regex sobre o `rawPath`, extraindo path parameters nomeados.
+
+```yaml
+# serverless.yml — uma unica integracao cobre todas as rotas
+functions:
+  api:
+    handler: index.handler
+    events:
+      - httpApi:
+          method: "*"
+          path: /{proxy+}
+```
+
+```python
+router.get("/api/v1/users/{id}", show_user)
+# Request para /api/v1/users/42 com routeKey="ANY /{proxy+}"
+# -> handler chamado, req.params["id"] == "42"
+```
+
+Regras:
+
+- O match exato `(method, path)` continua sendo tentado primeiro (fast path).
+- O fallback por regex respeita o metodo HTTP — `POST /users` nao responde a `GET /users`.
+- `{param}` casa um unico segmento de URL (nao atravessa `/`).
+- Multiplos path parameters sao suportados (`/courses/{course_id}/modules/{module_id}`).
+- Middlewares, grupos e resolucao de handler por string continuam funcionando identicamente.
+
 ## Agrupamento de rotas
 
 ```python

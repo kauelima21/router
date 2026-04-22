@@ -285,6 +285,125 @@ def test_group_middleware_combined_with_route_middleware(router, event_factory):
     assert calls == ["group", "route"]
 
 
+# --- Catch-all proxy+ integration ---
+
+def test_dispatch_resolves_catchall_path(router, event_factory):
+    """When API Gateway integrates via `/{proxy+}`, routeKey is generic but
+    rawPath holds the real URL — the router must resolve by regex fallback."""
+    router.get("/api/v1/users", lambda req, res: res.json({"ok": True}))
+
+    event = event_factory("GET", "/api/v1/users", route_key="ANY /{proxy+}")
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 200
+    assert '"ok": true' in result["body"]
+
+
+def test_dispatch_catchall_extracts_path_params(router, event_factory):
+    def handler(req, res):
+        return res.json({"id": req.params["id"]})
+
+    router.get("/users/{id}", handler)
+
+    event = event_factory("GET", "/users/42", route_key="ANY /{proxy+}")
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 200
+    assert '"id": "42"' in result["body"]
+
+
+def test_dispatch_catchall_extracts_multiple_path_params(router, event_factory):
+    def handler(req, res):
+        return res.json({"course": req.params["course_id"], "module": req.params["module_id"]})
+
+    router.get("/courses/{course_id}/modules/{module_id}", handler)
+
+    event = event_factory(
+        "GET",
+        "/courses/abc/modules/xyz",
+        route_key="ANY /{proxy+}",
+    )
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 200
+    assert '"course": "abc"' in result["body"]
+    assert '"module": "xyz"' in result["body"]
+
+
+def test_dispatch_catchall_merges_existing_path_params(router, event_factory):
+    def handler(req, res):
+        return res.json({"id": req.params["id"], "extra": req.params.get("extra")})
+
+    router.get("/items/{id}", handler)
+
+    event = event_factory(
+        "GET",
+        "/items/42",
+        route_key="ANY /{proxy+}",
+        params={"extra": "preset"},
+    )
+    result = router.dispatch(event)
+
+    assert '"id": "42"' in result["body"]
+    assert '"extra": "preset"' in result["body"]
+
+
+def test_dispatch_catchall_no_matching_route_returns_404(router, event_factory):
+    router.get("/users", lambda req, res: res.json({"ok": True}))
+
+    event = event_factory("GET", "/missing", route_key="ANY /{proxy+}")
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 404
+
+
+def test_dispatch_catchall_method_mismatch_returns_404(router, event_factory):
+    router.post("/users", lambda req, res: res.json({"ok": True}))
+
+    event = event_factory("GET", "/users", route_key="ANY /{proxy+}")
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 404
+
+
+def test_dispatch_catchall_rejects_path_with_slash_in_param(router, event_factory):
+    """`{id}` matches a single URL segment — it must not greedily swallow `/`."""
+    router.get("/users/{id}", lambda req, res: res.json({"ok": True}))
+
+    event = event_factory("GET", "/users/a/b", route_key="ANY /{proxy+}")
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 404
+
+
+def test_dispatch_exact_match_still_wins(router, event_factory):
+    """Exact (method, path) lookup is tried before the regex fallback."""
+    router.get("/users/{id}", lambda req, res: res.json({"source": "template"}))
+
+    # routeKey already carries the template — should hit exact branch.
+    event = event_factory("GET", "/users/{id}", params={"id": "42"})
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 200
+    assert '"source": "template"' in result["body"]
+
+
+def test_dispatch_catchall_preserves_middleware(router, event_factory):
+    calls = []
+
+    def auth(req, res, next_fn):
+        calls.append("auth")
+        return next_fn(req, res)
+
+    router.get("/me", lambda req, res: res.json({"ok": True}), middleware=auth)
+
+    event = event_factory("GET", "/me", route_key="ANY /{proxy+}")
+    result = router.dispatch(event)
+
+    assert result["statusCode"] == 200
+    assert calls == ["auth"]
+
+
 def test_group_none_resets_middleware(router, event_factory):
     calls = []
 
