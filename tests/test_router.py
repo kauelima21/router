@@ -357,13 +357,13 @@ def test_dispatch_catchall_no_matching_route_returns_404(router, event_factory):
     assert result["statusCode"] == 404
 
 
-def test_dispatch_catchall_method_mismatch_returns_404(router, event_factory):
+def test_dispatch_catchall_method_mismatch_returns_405(router, event_factory):
     router.post("/users", lambda req, res: res.json({"ok": True}))
 
     event = event_factory("GET", "/users", route_key="ANY /{proxy+}")
     result = router.dispatch(event)
 
-    assert result["statusCode"] == 404
+    assert result["statusCode"] == 405
 
 
 def test_dispatch_catchall_rejects_path_with_slash_in_param(router, event_factory):
@@ -402,6 +402,99 @@ def test_dispatch_catchall_preserves_middleware(router, event_factory):
 
     assert result["statusCode"] == 200
     assert calls == ["auth"]
+
+
+# --- error() reporter ---
+
+def test_error_returns_none_before_any_dispatch(router):
+    assert router.error() is None
+
+
+def test_error_returns_none_on_success(router, event_factory):
+    router.get("/ok", lambda req, res: res.json({"ok": True}))
+    router.dispatch(event_factory("GET", "/ok"))
+
+    assert router.error() is None
+
+
+def test_error_returns_404_on_route_not_found(router, event_factory):
+    router.dispatch(event_factory("GET", "/missing"))
+
+    assert router.error() == 404
+
+
+def test_error_returns_405_on_method_not_allowed(router, event_factory):
+    router.post("/users", lambda req, res: res.json({"ok": True}))
+    router.dispatch(event_factory("GET", "/users"))
+
+    assert router.error() == 405
+
+
+def test_error_returns_400_on_malformed_event(router):
+    router.dispatch({})
+
+    assert router.error() == 400
+
+
+def test_error_returns_501_on_not_implemented(router, event_factory):
+    def todo(req, res):
+        raise NotImplementedError
+
+    router.get("/todo", todo)
+    router.dispatch(event_factory("GET", "/todo"))
+
+    assert router.error() == 501
+
+
+def test_error_returns_500_on_handler_exception(router, event_factory):
+    def boom(req, res):
+        raise RuntimeError("fail")
+
+    router.get("/boom", boom)
+    router.dispatch(event_factory("GET", "/boom"))
+
+    assert router.error() == 500
+
+
+def test_error_resets_on_next_successful_dispatch(router, event_factory):
+    router.get("/ok", lambda req, res: res.json({"ok": True}))
+
+    router.dispatch(event_factory("GET", "/missing"))
+    assert router.error() == 404
+
+    router.dispatch(event_factory("GET", "/ok"))
+    assert router.error() is None
+
+
+def test_error_with_redirect_pattern(router, event_factory):
+    """Typical usage: dispatch, check error(), redirect via Response.redirect()."""
+    from router.contracts.http import Response
+
+    router.dispatch(event_factory("GET", "/missing"))
+
+    code = router.error()
+    assert code == 404
+
+    redirect = Response().redirect(f"/ooops/{code}")
+    assert redirect["statusCode"] == 303
+    assert redirect["headers"]["Location"] == "/ooops/404"
+
+
+# --- 405 method not allowed without error handler ---
+
+def test_dispatch_405_method_not_allowed(router, event_factory):
+    router.post("/users", lambda req, res: res.json({"ok": True}))
+    result = router.dispatch(event_factory("GET", "/users"))
+
+    assert result["statusCode"] == 405
+    assert result["body"] == "Method Not Allowed"
+
+
+def test_dispatch_405_with_path_params(router, event_factory):
+    router.post("/users/{id}", lambda req, res: res.json({"ok": True}))
+    result = router.dispatch(event_factory("GET", "/users/42", route_key="ANY /{proxy+}"))
+
+    assert result["statusCode"] == 405
 
 
 def test_group_none_resets_middleware(router, event_factory):

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from router.contracts.http import Response
 
 
@@ -83,3 +85,55 @@ def test_finalize_includes_base64_flag():
     result = Response().send("ok")
 
     assert result["isBase64Encoded"] is False
+
+
+def test_redirect_default_is_303():
+    result = Response().redirect("/login")
+
+    assert result["statusCode"] == 303
+    assert result["headers"]["Location"] == "/login"
+    assert "body" not in result
+
+
+def test_redirect_permanent():
+    result = Response().redirect("https://example.com", 301)
+
+    assert result["statusCode"] == 301
+    assert result["headers"]["Location"] == "https://example.com"
+
+
+def test_redirect_rejects_non_3xx():
+    with pytest.raises(ValueError, match="redirect status must be 3xx"):
+        Response().redirect("/login", 200)
+
+
+def test_redirect_method_get_forces_303():
+    result = Response().redirect("/list", method="GET")
+
+    assert result["statusCode"] == 303
+    assert result["headers"]["Location"] == "/list"
+
+
+def test_redirect_method_post_preserves_with_307():
+    result = Response().redirect("/items", method="POST")
+
+    assert result["statusCode"] == 307
+
+
+def test_redirect_method_lowercase_is_normalized():
+    result = Response().redirect("/list", method="get")
+
+    assert result["statusCode"] == 303
+
+
+def test_redirect_method_overrides_status_code():
+    """Explicit status_code is overridden when method is given."""
+    result = Response().redirect("/x", status_code=301, method="GET")
+
+    assert result["statusCode"] == 303
+
+
+def test_redirect_method_put_uses_307():
+    result = Response().redirect("/x", method="PUT")
+
+    assert result["statusCode"] == 307

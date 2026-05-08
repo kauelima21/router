@@ -174,6 +174,26 @@ class Response:
         self.body = body
         return self._finalize()
 
+    def redirect(self, url: str, status_code: int = 303, method: str | None = None):
+        """Redirect to ``url``.
+
+        ``status_code`` defaults to 303 (See Other) — the right choice for
+        fullstack apps that POST a form and redirect to a GET page. When
+        ``method`` is given it overrides ``status_code`` so the chosen status
+        forces the desired verb on the follow-up request:
+
+        - ``method="GET"``  → 303 See Other (force GET, POST-Redirect-GET)
+        - any other verb    → 307 Temporary Redirect (preserve original method)
+        """
+        if method is not None:
+            status_code = 303 if method.upper() == "GET" else 307
+        if not 300 <= status_code < 400:
+            raise ValueError(f"redirect status must be 3xx, got {status_code}")
+        self.status_code = status_code
+        self.headers["Location"] = url
+        self.body = None
+        return self._finalize()
+
     def set(self, key: str, value: str):
         self.headers[key] = str(value)
         return self

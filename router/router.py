@@ -34,7 +34,7 @@ class Router:
         self._namespace = None
         self._silent = silent
         self._api_version = api_version
-        self._error = None
+        self._error_code = None
 
     def _resolve_handler(self, handler):
         if callable(handler):
@@ -95,32 +95,69 @@ class Router:
            compiled pattern. This makes catch-all integrations work: when
            API Gateway sends ``routeKey="ANY /{proxy+}"``, path ends up as
            ``/{proxy+}`` but ``raw_path`` is the concrete URL.
+
+        Returns one of:
+        - ``(handler, middlewares, template, params)`` on match.
+        - ``"method_not_allowed"`` when path matches but method does not.
+        - ``None`` when nothing matches.
         """
         direct = self.routes.get((method, path))
         if direct is not None:
             handler, middlewares, _ = direct
             return handler, middlewares, path, {}
 
+        method_mismatch = False
         for (route_method, template), (handler, middlewares, pattern) in self.routes.items():
-            if route_method != method:
-                continue
             match = pattern.match(raw_path)
-            if match:
+            if not match:
+                continue
+            if route_method == method:
                 return handler, middlewares, template, match.groupdict()
+            method_mismatch = True
 
+        if method_mismatch:
+            return "method_not_allowed"
         return None
 
+    def _run_with_middleware(self, handler, middlewares, request, response):
+        if not middlewares:
+            return handler(request, response)
+
+        def make_next(index):
+            if index >= len(middlewares):
+                return lambda req, res: handler(req, res)
+            return lambda req, res: middlewares[index](req, res, make_next(index + 1))
+
+        return make_next(0)(request, response)
+
     def dispatch(self, event: dict):
-        request = Request(event, api_version=self._api_version)
+        self._error_code = None
         response = Response()
+
+        try:
+            request = Request(event, api_version=self._api_version)
+        except (KeyError, TypeError, ValueError) as exc:
+            if not self._silent:
+                logger.warning("Bad request: %s", exc)
+            self._error_code = 400
+            return response.status(400).send("Bad Request")
+
         method = request.method
         path = request.path
         raw_path = request.raw_path
 
         resolved = self._resolve_route(method, path, raw_path)
+
+        if resolved == "method_not_allowed":
+            if not self._silent:
+                logger.warning("Method not allowed: %s %s", method, raw_path or path)
+            self._error_code = 405
+            return response.status(405).send("Method Not Allowed")
+
         if resolved is None:
             if not self._silent:
                 logger.warning("Route not found: %s %s", method, raw_path or path)
+            self._error_code = 404
             return response.status(404).send("Not Found")
 
         handler, middlewares, matched_template, extra_params = resolved
@@ -130,16 +167,18 @@ class Router:
             request.params = {**(request.params or {}), **extra_params}
 
         try:
-            if middlewares:
-                def make_next(index):
-                    if index >= len(middlewares):
-                        return lambda req, res: handler(req, res)
-                    return lambda req, res: middlewares[index](req, res, make_next(index + 1))
-                return make_next(0)(request, response)
-            return handler(request, response)
+            return self._run_with_middleware(handler, middlewares, request, response)
+        except NotImplementedError as exc:
+            if not self._silent:
+                logger.error(
+                    "Controller not implemented on %s %s: %s", method, matched_template, exc
+                )
+            self._error_code = 501
+            return response.status(501).send("Not Implemented")
         except Exception as exc:
             if not self._silent:
                 logger.error("Handler error on %s %s: %s", method, matched_template, exc)
+            self._error_code = 500
             return response.status(500).json({"error": "Internal Server Error"})
 
     def namespace(self, module_path: str | None):
@@ -150,6 +189,20 @@ class Router:
         self._group = group
         self._group_middleware = self._normalize_middleware(middleware)
         return self
+
+    def error(self) -> int | None:
+        """Returns the HTTP status code of the most recent dispatch error
+        (400/404/405/500/501), or ``None`` if the last dispatch succeeded.
+
+        Use after ``dispatch()`` to decide whether to redirect to an error
+        page:
+
+            result = router.dispatch(event)
+            if (code := router.error()):
+                return Response().redirect(f"/ooops/{code}")
+            return result
+        """
+        return self._error_code
 
     def get(self, path: str, handler, middleware=None):
         self._add_route("GET", path, handler, middleware)
