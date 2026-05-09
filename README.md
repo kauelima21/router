@@ -129,7 +129,29 @@ return res.set("X-Request-Id", "abc-123").json({"ok": True})
 
 # Cookies
 return res.cookie("session=abc; HttpOnly; Secure").json({"ok": True})
+
+# Redirect (default 303 — ideal para POST-Redirect-GET)
+return res.redirect("/dashboard")
+
+# Redirect com codigo explicito
+return res.redirect("/new-home", 301)
+
+# Redirect direcionado pelo verbo desejado no follow-up
+return res.redirect("/items", method="GET")    # forca GET   -> 303
+return res.redirect("/items", method="POST")   # preserva    -> 307
 ```
+
+### `redirect(url, status_code=303, method=None)`
+
+| Codigo | Comportamento                                                  |
+|--------|----------------------------------------------------------------|
+| 301    | Movido permanentemente. Browsers convertem POST -> GET.        |
+| 302    | Found. Convertido para GET na pratica (legado).                |
+| **303**| **See Other** — forca GET no follow-up. Padrao do `redirect`.  |
+| 307    | Temporary Redirect — preserva o verbo original (POST -> POST). |
+| 308    | Permanent Redirect — preserva o verbo, permanente.             |
+
+Quando `method` e informado, o argumento `status_code` e sobrescrito: `"GET"` resolve para `303`, qualquer outro verbo resolve para `307`.
 
 ## Metodos HTTP suportados
 
@@ -167,13 +189,55 @@ Caso uma excecao ocorra dentro do middleware ou do handler, o router ainda retor
 
 ## Tratamento de erros
 
-O router captura excecoes nao tratadas no handler e retorna `500` com corpo JSON:
+O `dispatch()` retorna respostas-padrao para cada situacao e classifica o resultado para que voce possa intervir (ex.: redirecionar para uma pagina de erro estilizada).
 
-```json
-{"error": "Internal Server Error"}
+| Codigo | Quando ocorre                                              | Body padrao                          |
+|--------|------------------------------------------------------------|--------------------------------------|
+| 400    | Evento malformado (parsing do `Request` falha)             | `Bad Request`                        |
+| 404    | Nenhuma rota casa com a requisicao                         | `Not Found`                          |
+| 405    | Path casa, mas o metodo HTTP nao                           | `Method Not Allowed`                 |
+| 500    | Excecao nao tratada no handler/middleware                  | `{"error": "Internal Server Error"}` |
+| 501    | Handler levantou `NotImplementedError`                     | `Not Implemented`                    |
+
+### `router.error()` — reporter de erro
+
+Sem argumentos. Retorna o codigo HTTP do ultimo `dispatch()` que produziu erro (`400/404/405/500/501`) ou `None` em caso de sucesso. Util para combinar com `Response.redirect()` em apps fullstack que servem paginas HTML estilizadas:
+
+```python
+from router import Router
+from router.contracts.http import Response
+
+router = Router()
+router.namespace("controllers")
+
+# Pagina dinamica de erro — recebe o codigo via path parameter
+router.get("/ooops/{errcode}", "ErrorController:show")
+
+# Rotas da app
+router.get("/users", "UserController:index")
+
+def handler(event, context):
+    result = router.dispatch(event)
+    if (code := router.error()):
+        return Response().redirect(f"/ooops/{code}")
+    return result
 ```
 
-Por padrao, o router loga warnings (404) e errors (500) via `logging`. Para desabilitar:
+```python
+# controllers/error_controller.py
+class ErrorController:
+    def show(self, req, res):
+        code = req.params["errcode"]
+        return res.status(int(code)).html(f"<h1>Oops {code}</h1>")
+```
+
+Fluxo:
+
+1. `GET /missing` -> `dispatch()` retorna 404, `router.error()` == `404`.
+2. Handler responde `303 Location: /ooops/404`.
+3. Browser segue -> `GET /ooops/404` casa com a rota registrada e renderiza a pagina.
+
+Por padrao o router loga warnings (4xx) e errors (5xx) via `logging`. Para desabilitar:
 
 ```python
 router = Router(silent=True)
